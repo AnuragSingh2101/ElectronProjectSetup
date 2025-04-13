@@ -3,17 +3,284 @@
   <head>
     <meta charset="UTF-8">
     <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';">
     <link href="./styles.css" rel="stylesheet">
-    <title>Hello World!</title>
+    <title>Go-Back-N Protocol(2023BCS-010)</title>
   </head>
-  <body>
-    <h1>Hello World!</h1>
-    We are using Node.js <span id="node-version"></span>,
-    Chromium <span id="chrome-version"></span>,
-    and Electron <span id="electron-version"></span>.
 
-    <!-- You can also require other files to run in this process -->
-    <script src="./renderer.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; }
+    .controls { margin-bottom: 10px; }
+    .container { width: 100%; overflow-x: auto; border: 2px solid black; padding: 10px; }
+    canvas { background-color: white; display: block; margin: auto; }
+    button, input { padding: 10px; margin: 5px; cursor: pointer; }
+    input[type="number"] { width: 80px; }
+    .legend { margin-top: 10px; display: flex; justify-content: center; gap: 20px; }
+    .legend div { display: flex; align-items: center; gap: 5px; }
+    .legend span { width: 20px; height: 20px; display: inline-block; border: 1px solid black; }
+    .speed-buttons button { background-color: #007bff; color: white; border: none; padding: 8px 15px; }
+    .speed-buttons button:hover { background-color: #0056b3; }
+    #eventLog { margin-top: 20px; max-height: 200px; overflow-y: auto; background-color: #f4f4f4; padding: 10px; border: 1px solid #ccc; text-align: left; }
+</style>
+
+
+
+
+
+  <body>
+   
+<body>
+
+  <h2>Go-Back-N ARQ Protocol Simulation</h2>
+
+  <div class="controls">
+      <label>Number of Packets: <input type="number" id="packetCount" value="10" min="1" max="50"></label>
+      <label>Window Size: <input type="number" id="windowSize" value="4" min="1" max="10"></label>
+      <button onclick="startAnimation(false)">Start (No Packet Loss)</button>
+      <button onclick="startAnimation(true)">Start (With Packet Loss)</button>
+      <button onclick="pauseAnimation()">Pause</button>
+      <button onclick="resetAnimation()">Reset</button>
+      <button onclick="stepThrough()">Next Step</button>
+  </div>
+
+  <div class="speed-buttons">
+      <label>Speed:</label>
+      <button onclick="updateSpeed(1000)">1x</button>
+      <button onclick="updateSpeed(500)">2x</button>
+      <button onclick="updateSpeed(250)">3x</button>
+      <button onclick="updateSpeed(125)">4x</button>
+  </div>
+
+  <div class="container">
+      <canvas id="gbnCanvas"></canvas>
+  </div>
+
+  <div class="legend">
+      <div><span id="unsentLegend" style="background-color: gray;"></span> Unsent Packet</div>
+      <div><span id="sentLegend" style="background-color: blue;"></span> Sent Packet</div>
+      <div><span id="ackedLegend" style="background-color: green;"></span> Acknowledged (ACK) Packet</div>
+      <div><span id="lostLegend" style="background-color: red;"></span> Lost Packet</div>
+  </div>
+
+  <div>
+      <label>Unsent Packet Color: <input type="color" id="unsentColor" value="#808080" onchange="updateColor('unsent')"></label>
+      <label>Sent Packet Color: <input type="color" id="sentColor" value="#0000FF" onchange="updateColor('sent')"></label>
+      <label>Acknowledged Packet Color: <input type="color" id="ackedColor" value="#008000" onchange="updateColor('acked')"></label>
+      <label>Lost Packet Color: <input type="color" id="lostColor" value="#FF0000" onchange="updateColor('lost')"></label>
+  </div>
+
+  <div id="eventLog"></div>
+
+  
+
+</body>
+
+    
+   
   </body>
+  <script src="./renderer.js"></script>
+  
+<script>
+  const canvas = document.getElementById("gbnCanvas");
+  const ctx = canvas.getContext("2d");
+
+  let TOTAL_PACKETS = 10;
+  let WINDOW_SIZE = 4;
+  let base = 0, nextSeqNum = 0;
+  let packetStatus = [];
+  let animationRunning = false;
+  let speed = 1000;
+  let animationTimer;
+  let allowPacketLoss = false;
+  let packetWidth = 90;
+  let packetHeight = 50;
+  let senderY = 100, receiverY = 300;
+
+  let packetColors = {
+      unsent: "#808080", // default gray
+      sent: "#0000FF",   // default blue
+      acked: "#008000",  // default green
+      lost: "#FF0000"    // default red
+  };
+
+  function initializePackets() {
+      TOTAL_PACKETS = parseInt(document.getElementById("packetCount").value);
+      WINDOW_SIZE = parseInt(document.getElementById("windowSize").value);
+      base = 0;
+      nextSeqNum = 0;
+      packetStatus = Array(TOTAL_PACKETS).fill("unsent");
+
+      canvas.width = Math.max(900, TOTAL_PACKETS * packetWidth + 200);
+      canvas.height = 500;
+
+      drawPackets();
+  }
+
+  function getColor(status) {
+      return packetColors[status] || "white";
+  }
+
+  function drawPackets() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.font = "16px Arial";
+      ctx.fillStyle = "black";
+      ctx.fillText("Sender", 20, senderY + 20);
+      ctx.fillText("Receiver", 20, receiverY + 20);
+
+      for (let i = 0; i < TOTAL_PACKETS; i++) {
+          let x = 100 + i * packetWidth;
+
+          ctx.fillStyle = getColor(packetStatus[i]);
+          ctx.fillRect(x, senderY, packetWidth - 10, packetHeight);
+          ctx.strokeRect(x, senderY, packetWidth - 10, packetHeight);
+          ctx.fillStyle = "black";
+          ctx.fillText("Pkt " + i, x + 15, senderY + 30);
+
+          if (packetStatus[i] === "acked") {
+              ctx.fillStyle = "green";
+              ctx.fillRect(x, receiverY, packetWidth - 10, packetHeight);
+              ctx.strokeRect(x, receiverY, packetWidth - 10, packetHeight);
+              ctx.fillStyle = "black";
+              ctx.fillText("ACK " + i, x + 5, receiverY + 30);
+          }
+
+          if (packetStatus[i] === "sent") {
+              drawArrow(x + 30, senderY + packetHeight, x + 30, receiverY, "blue");
+          }
+          if (packetStatus[i] === "acked") {
+              drawArrow(x + 30, receiverY, x + 30, senderY + packetHeight, "green");
+          }
+      }
+
+      let windowStartX = 100 + base * packetWidth;
+      ctx.strokeStyle = "blue";
+      ctx.strokeRect(windowStartX - 5, senderY - 5, packetWidth * WINDOW_SIZE, packetHeight + 10);
+
+      document.querySelector('.container').scrollLeft = windowStartX - 100;
+  }
+
+  function drawArrow(x1, y1, x2, y2, color) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(x2 - 5, y2 - 5);
+      ctx.lineTo(x2, y2);
+      ctx.lineTo(x2 + 5, y2 - 5);
+      ctx.stroke();
+  }
+
+  function updateEventLog(message) {
+      const eventLog = document.getElementById("eventLog");
+      const logItem = document.createElement("div");
+      logItem.textContent = message;
+      eventLog.appendChild(logItem);
+  }
+
+  function updateColor(status) {
+      const colorPicker = document.getElementById(status + "Color");
+      packetColors[status] = colorPicker.value;
+
+      // Update color in legend box
+      const legendBox = document.getElementById(status + "Legend");
+      legendBox.style.backgroundColor = colorPicker.value;
+
+      // Redraw packets with updated color
+      drawPackets();
+  }
+
+  function sendPacket() {
+      if (!animationRunning) return;
+
+      let hasLoss = false;
+
+      if (nextSeqNum < base + WINDOW_SIZE && nextSeqNum < TOTAL_PACKETS) {
+          packetStatus[nextSeqNum] = allowPacketLoss && Math.random() < 0.2 ? "lost" : "sent";
+          if (packetStatus[nextSeqNum] === "lost") {
+              hasLoss = true;
+              updateEventLog(`Packet ${nextSeqNum} lost`);
+          } else {
+              updateEventLog(`Packet ${nextSeqNum} sent`);
+          }
+          nextSeqNum++;
+      }
+
+      drawPackets();
+      animationTimer = setTimeout(() => receiveAck(hasLoss), speed);
+  }
+
+  function receiveAck(hasLoss) {
+      if (!animationRunning) return;
+
+      if (allowPacketLoss && hasLoss) {
+          for (let i = base; i < base + WINDOW_SIZE && i < TOTAL_PACKETS; i++) {
+              packetStatus[i] = "unsent";
+          }
+          nextSeqNum = base;
+          updateEventLog(`Retransmitting from Packet ${base}`);
+      } else {
+          if (base < TOTAL_PACKETS && packetStatus[base] === "sent") {
+              packetStatus[base] = "acked";
+              updateEventLog(`Packet ${base} acknowledged`);
+              base++;
+          }
+      }
+
+      drawPackets();
+      if (base < TOTAL_PACKETS) {
+          animationTimer = setTimeout(sendPacket, speed);
+      } else {
+          animationRunning = false;
+      }
+  }
+
+  function stepThrough() {
+      if (!animationRunning) return;
+
+      let hasLoss = false;
+
+      if (nextSeqNum < base + WINDOW_SIZE && nextSeqNum < TOTAL_PACKETS) {
+          packetStatus[nextSeqNum] = allowPacketLoss && Math.random() < 0.2 ? "lost" : "sent";
+          if (packetStatus[nextSeqNum] === "lost") {
+              hasLoss = true;
+          }
+          nextSeqNum++;
+      }
+
+      drawPackets();
+      receiveAck(hasLoss);
+  }
+
+  function pauseAnimation() {
+      clearTimeout(animationTimer);
+      animationRunning = false;
+  }
+
+  function resetAnimation() {
+      clearTimeout(animationTimer);
+      initializePackets();
+      animationRunning = false;
+  }
+
+  function updateSpeed(newSpeed) {
+      speed = newSpeed;
+      if (animationRunning) {
+          resetAnimation();
+          startAnimation(allowPacketLoss);
+      }
+  }
+
+  function startAnimation(withPacketLoss) {
+      allowPacketLoss = withPacketLoss;
+      initializePackets();
+      animationRunning = true;
+      sendPacket();
+  }
+
+</script>
 </html>
